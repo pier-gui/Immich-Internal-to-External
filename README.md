@@ -1,38 +1,31 @@
-# Immich Album to a local directory
+# Immich Internal library assets to external library
 
-## What does this script solves?
+This script will move assets within immich's internal library to an external library. The internal folder structure is copied to the external library.
 
-Probably similar to others I'm adding images to my immich in two ways:
-1. I'm uploading curated images to my NAS from my DSLR camera into dated folders
-2. Using immich auto backup feature to upload photos to immich
+My reason for this: I started with immich to manage photo/video uploads to my Synology NAS, but needed to move away from that because of poor iOS app performance.
+I already had a large asset library in immich and didn't want to lose the many albums I had created in immich. And I still wanted the option of using immich as a front-end.
 
-What is the issue then?
+Essentially this helped me achieve the following setup, from my starting point in which I only had assets in the internal immich library
+- Synology Photos is used to backup photos from iOS and Android phones. SP stores the assets within year and month folders on the NAS shared photos folder.
+- immich has access to the shared photos folder as an external library.
+- As long as I don't move assets or change the shared folder structure, assets will be in their expected locations for both immich and SP
 
-The mobile uploads are dumped in a "bucket" by immich and no album directories are created on my NAS after photos added to albums.
-The storage template does not solve this, that is just a directory structure for the fresh uploaded files.
+# Setup
+I have a Synology NAS with DSM 7. Immich (v1.132.3) is running in a Docker container on the NAS.
 
-## Why the existing immich albums are not enough?
-The database immich creates cannot be read by other software. For example if I want to check some photos on Plex on my TV I don't have albums.
+# How does it work?
+The script will find all assets within an immich album that are stored in the Internal library, and move them to the specified external library.
+The internal library folder structure is retained in the external library location.
+The immich database is updated to recognized the asset in its new storage location, and retains all other immich data (albums, machine learning, thumbnails...).
 
-## What the script does?
-It checks if a mobile upload is part of an existing album and moves it to a similarly named directory to your external library.
-The script modifies the database so immich thinks the photo was already uploaded as an external library file.
-Since immich skips existing photos from upload it will not be uploaded again from your phone.
+# Warning
+I'm offering this up without any guarantees. All I can say is that it worked on my system.
+I don't know what would happen if the script tried to move an asset but a file with the same name already exists in the destination folder, for example.
 
-# Disclaimer
-This script modifies the database. Create database backup! To dial it in I suggest try it with a single image on one album. If it worked you can
-extend it to multiple images.
-
-## Known limitations
-This script can only deal with a single album. So if you have multiple albums you need to create copies of the script.
-
-# How to use?
-
-## Prerequisites:
-1. Immich is running in a docker container
-2. Postgres is running in a docker container
-3. Your NAS is a linux based system that can execute cron jobs
-
-Add the script to crontab (User Scripts in Unraid) and change the variables in the beginning of the script.
-
-Tested and using it on Unraid 7
+# How to use it?
+1. Set your immich internal library storage template as you want the external library to be organized, and run the storage template migration job.
+  I set mine to match how Synology Photos stores photos: {{y}}/{{MM}}/{{filename}}
+2. Create an album in immich with a few assets that you want to move (I suggest doing only a few or a single asset initially to make sure it works)
+3. Set the script variables to match your setup. See comments in the script for guidance.
+4. Run the script (works with DSM Task Scheduler but SSH is better since you can see what's happening)
+5. Add more assets to the immich album and repeat
