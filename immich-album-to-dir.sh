@@ -1,25 +1,30 @@
 #!/bin/bash
 
-# This script moves your phone uploads added to an immich album to an external library directory on your server.
-# This solves the ultimate issue that an Immich album is virtual, only exsists in the database.
+# Modifided from original script at https://github.com/dansity/Immich-Album-to-Directory
+# This script moves photos from the immich internal library to an external library.
+# My use case was to move already-uploaded assets to the Synology Photos folder. Future uploads are from SP but I wanted to keep albums made in immich (and access future SP uploads in immich).
+# The external library will store photos in the same folder structure as the immich internal library. Update the storage template and run the Storage Template Migration Job in immich first.
+#	To match Synology Photos, the template would be {{y}}/{{MM}}/{{filename}}
 
-echo "=== Immich Album Photo Mover Script ==="
+echo "=== Immich Photo Mover Script ==="
 # --- CONFIGURATION ---
-ALBUM_NAME="2025_Garden"                                    # Monitored album name in immich
-SOURCE_DIR="/mnt/user/Photos/library"                       # Host path where immich uploads your phone images
-TARGET_DIR="/mnt/user/Photos/Garden/2025"                   # External album target dir path
-NEW_CONTAINER_PATH="/libraries/Garden/2025"                 # External album target path inside the container
-DRY_RUN=false                                               # For testing without any action set to true
-DOCKER_DB_CONTAINER="PostgreSQL_Immich"                     # Your postgres container name  
-TEMP_FILE="/mnt/user/immich/immich_kert_assets.csv"         # Temp file location
-NEW_LIBRARY_ID="3527ad02-d8b5-4af2-854e-a1d6af79c1db"       # Enter your external library ID from the DB
+ALBUM_NAME="Test"                                    		# Add the photos to this album in immich. All photos in this immich album will be moved
+SOURCE_DIR="/volume1/docker/immich-app/library/library"   	# Host path to immich uploads (note, I didn't include the folder with the immich user name)
+TARGET_DIR="/volume1/photo"                   				# Path for External Library files (and folder structure)
+NEW_CONTAINER_PATH="/volume1/photo"                 		# External album target path inside the container (often set as the same path as TARGET_DIR)
+DRY_RUN=true                                              	# For testing without any action set to true
+DOCKER_DB_CONTAINER="immich_postgres"                     	# Your postgres container name  
+TEMP_FILE="/volume1/photo/immich_kert_assets.csv"         	# Temp file location
+NEW_LIBRARY_ID="68216611-9b60-416c-abe5-e40525776587"       # Enter your external library ID from the DB. I found this with "sudo docker logs immich_server". The line contained "GET /api/libraries/" then the ID.
 
 # Database update settings
 NEW_DEVICE_ID="Library Import"                              # Don't change
 SET_EXTERNAL=true                                           # Don't change
 
 # Container-to-host path mapping
-CONTAINER_PATH_PREFIX="/photos/library"
+	# Find the values below within the immich Folder Explorer
+CONTAINER_PATH_PREFIX="upload/library"						# Within the container, the Internal library path before the user name
+ORIGINAL_PATH_TRIM="upload/library/admin"					# Within the container, the Internal library path up to (including) the user name
 HOST_PATH_PREFIX="$SOURCE_DIR"
 # --- BEGIN SCRIPT ---
 echo "[CONFIG] Album: $ALBUM_NAME"
@@ -37,13 +42,14 @@ mkdir -p "$(dirname "$TEMP_FILE")"
 rm -f "$TEMP_FILE"
 touch "$TEMP_FILE"
 echo "[INFO] Executing query to find matching assets in album '$ALBUM_NAME'..."
+# Edit the LIKE instruction to match the first part of the container path to the internal library (% is a wildcard). This ensures that only internal assets will get moved.
 QUERY=$(cat <<EOF
 SELECT a.id, a."originalPath"
 FROM assets a
 JOIN albums_assets_assets aaa ON a.id = aaa."assetsId"
 JOIN albums al ON aaa."albumsId" = al.id
 WHERE al."albumName" = '$ALBUM_NAME'
-AND a."originalPath" LIKE '/photos/library/%';
+AND a."originalPath" LIKE 'upload/library/admin/%';
 EOF
 )
 docker exec -i "$DOCKER_DB_CONTAINER" psql -U postgres -d immich -t -A -F ',' -c "$QUERY" > "$TEMP_FILE"
@@ -55,7 +61,6 @@ if [[ "$ASSET_COUNT" -eq 0 ]]; then
 fi
 echo "[INFO] Found $ASSET_COUNT matching image(s)."
 echo "[INFO] Starting file operations..."
-mkdir -p "$TARGET_DIR"
 
 # Process counter
 processed=0
@@ -72,9 +77,9 @@ for line in "${csv_lines[@]}"; do
     
     # Map container path to host path
     src_file="${original_path/$CONTAINER_PATH_PREFIX/$HOST_PATH_PREFIX}"
-    filename=$(basename "$src_file")
-    dest_file="$TARGET_DIR/$filename"
-    new_db_path="$NEW_CONTAINER_PATH/$filename"
+	filename=$(basename "$src_file")
+	dest_file="${original_path/$ORIGINAL_PATH_TRIM/$TARGET_DIR}"
+	new_db_path="${original_path/$ORIGINAL_PATH_TRIM/$NEW_CONTAINER_PATH}"
     
     echo "[CHECK] Asset ID: $asset_id"
     echo "[CHECK] Container path: $original_path"
@@ -93,7 +98,12 @@ for line in "${csv_lines[@]}"; do
         echo "[DRY RUN] Would update isExternal = $SET_EXTERNAL"
     else
         echo "[ACTION] Moving file to: $dest_file"
-        mv "$src_file" "$dest_file"
+		
+		#create new path first if it doesn't exist in the external library
+		new_path="${dest_file/$filename}"
+		mkdir -p "$new_path"
+		
+		mv "$src_file" "$dest_file"
         mv_status=$?
         
         if [[ $mv_status -eq 0 ]]; then
@@ -127,3 +137,4 @@ echo "[INFO] Successfully processed $processed out of $ASSET_COUNT assets."
 echo "[CLEANUP] Removing temp file..."
 rm -f "$TEMP_FILE"
 echo "[DONE] All done."
+
